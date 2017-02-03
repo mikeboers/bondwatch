@@ -27,30 +27,62 @@ int main(int argc, char **argv) {
     int ret;
     int sock = -1;
 
+    // Options.
+    int allow_rootless = 0;
     char *nic_name = "bond0";
-    char *command[] = {
-        "/sbin/ifconfig",
-        nic_name,
-        "bondmode",
-        "static"
-    };
 
+    // Parse CLI arguments into options.
+    int flag;
+    while ((flag = getopt(argc, argv, "hwi:")) != -1) {
+        switch(flag) {
+
+            case 'h':
+                printf("Usage: %s [-w] [-i interface]\n", argv[0]);
+                printf("\n");
+                printf("Options:\n");
+                printf("-h            Print this help, an exit.\n");
+                printf("-i interface  Which interface to watch; defaults to \"bond0\".\n");
+                printf("-w            Watch for changes, even if we aren't root.\n");
+                exit(0);
+
+            case 'w':
+                allow_rootless = 1;
+                break;
+
+            case 'i':
+                nic_name = strdup(optarg);
+                break;
+
+        }
+    }
+
+
+    // Assert we are root.
+    int uid = getuid();
+    if (uid) {
+        LOG("WARNING: Not root; we won't be able to reset bondmode!");
+        if (!allow_rootless) {
+            LOG("ERROR: Use -w to watch without being able to take action.");
+            exit(1);
+        }
+    }
+
+    // Prep the command we will run to set the bondmode.
+    char command[256];
+    snprintf(command, 255, "/sbin/ifconfig %s bondmode static", nic_name);
+
+    // Prep the ifreq and ifmediareq structs. In my testing these only
+    // need to be setup once, and can be re-used.
     struct ifreq ifr;
     strncpy(ifr.ifr_name, nic_name, sizeof(ifr.ifr_name));
-
     struct ifmediareq ifmed;
     memset(&ifmed, 0, sizeof(struct ifmediareq));
     strlcpy(ifmed.ifm_name, nic_name, sizeof(ifmed.ifm_name));
 
-
-    int uid = getuid();
-    if (uid) {
-        LOG("WARNING: Not root; we won't be able to reset bondmode!");
-    }
-
     while (1) {
 
         if (sock == -1) {
+            // I've never seen this hit twice.
             LOG("DEBUG: Opening socket...");
             sock = socket(AF_INET, SOCK_DGRAM, 0);
         }
@@ -60,15 +92,15 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        // Assert the interface is up.
         ret = ioctl(sock, SIOCGIFFLAGS, &ifr);
         if (ret == -1) {
-            LOG("ERROR: Could not SIOCGIFFLAGS.");
+            LOG("ERROR: Could not SIOCGIFFLAGS; are you sure the interface exists?");
             sleep(10);
             continue;
         }
-
         if (!(ifr.ifr_flags & IFF_UP)) {
-            LOG("WARNING: IF is down.");
+            LOG("WARNING: Interface is down.");
             sleep(10);
             continue;
         }
@@ -80,30 +112,29 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        // We are checking if it appears to be either fully or half duplexed.
+        // In my testing, my bond had reverted to LACP when this had stopped
+        // being true.
         if (!(ifmed.ifm_active & IFM_FDX || ifmed.ifm_active & IFM_HDX)) {
-            
-            LOG("INFO: Bond appears down; setting bondmode to static.");
 
-            if (!uid) {
+            if (uid) {
+                // Just watching.
+                LOG("INFO: Bond appears inactive.");
+                sleep(5);
 
-                ret = fork();
-                if (ret == -1) {
-                    LOG("ERROR: Could not fork!");
-                    sleep(10);
-                    continue;
-                }
-                if (!ret) {
-                    execv("/sbin/ifconfig", command);
-                }
-                wait(&ret);
+            } else {
+                LOG("INFO: Bond appears inactive; setting bondmode to static.");
+                ret = system(command);
                 if (ret) {
                     LOG("ERROR: ifconfig exited with non-zero code (%d)!", ret);
-                    sleep(9);
+                    sleep(10);
                 }
-
             }
-            sleep(1);
+
         } else {
+            // 4Hz seems to be pretty good in my usage.
+            // Even at a much higher frequency there isn't a visible
+            // load on the system.
             usleep(250000);
         }
 

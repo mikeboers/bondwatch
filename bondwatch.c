@@ -10,6 +10,18 @@
 #include <unistd.h>
 
 
+#define LOG(pattern, ...) { \
+    time_t __time; \
+    struct tm __tm; \
+    time(&__time); \
+    localtime_r(&__time, &__tm); \
+    printf("[bondwatch] %04d-%02d-%02dT%02d:%02d:%02d " pattern "\n", \
+        __tm.tm_year + 1900, __tm.tm_mon + 1, __tm.tm_mday, __tm.tm_hour, __tm.tm_min, __tm.tm_sec, \
+        ##__VA_ARGS__ \
+    ); \
+};
+
+
 int main(int argc, char **argv) {
 
     int ret;
@@ -30,65 +42,53 @@ int main(int argc, char **argv) {
     memset(&ifmed, 0, sizeof(struct ifmediareq));
     strlcpy(ifmed.ifm_name, nic_name, sizeof(ifmed.ifm_name));
 
-    struct timeval tv;
-    struct timezone tz;
-    time_t time_;
-    struct tm tm_;
 
     int uid = getuid();
     if (uid) {
-        printf("Not root; won't be able to reset bondmode!\n");
+        LOG("WARNING: Not root; we won't be able to reset bondmode!");
     }
 
     while (1) {
 
         if (sock == -1) {
+            LOG("DEBUG: Opening socket...");
             sock = socket(AF_INET, SOCK_DGRAM, 0);
         }
         if (sock == -1) {
-            printf("Could not open socket.\n");
+            LOG("ERROR: Could not open socket.");
             sleep(10);
             continue;
         }
 
         ret = ioctl(sock, SIOCGIFFLAGS, &ifr);
         if (ret == -1) {
-            printf("Could not SIOCGIFFLAGS.\n");
+            LOG("ERROR: Could not SIOCGIFFLAGS.");
             sleep(10);
             continue;
         }
 
         if (!(ifr.ifr_flags & IFF_UP)) {
-            printf("IF is down.\n");
+            LOG("WARNING: IF is down.");
             sleep(10);
             continue;
         }
 
         ret = ioctl(sock, SIOCGIFMEDIA, (caddr_t)&ifmed);
         if (ret == -1) {
-            printf("Could not SIOCGIFMEDIA.\n");
+            LOG("ERROR: Could not SIOCGIFMEDIA.");
             sleep(10);
             continue;
         }
 
         if (!(ifmed.ifm_active & IFM_FDX || ifmed.ifm_active & IFM_HDX)) {
             
-            time(&time_);
-            localtime_r(&time_, &tm_);
-            printf("%04d-%02d-%02dT%02d:%02d:%02d IF is not set up; setting bondmode to static...\n",
-                tm_.tm_year + 1900,
-                tm_.tm_mon + 1,
-                tm_.tm_mday,
-                tm_.tm_hour,
-                tm_.tm_min,
-                tm_.tm_sec
-            );
+            LOG("INFO: Bond appears down; setting bondmode to static.");
 
             if (!uid) {
 
                 ret = fork();
                 if (ret == -1) {
-                    printf("Could not fork!\n");
+                    LOG("ERROR: Could not fork!");
                     sleep(10);
                     continue;
                 }
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
                 }
                 wait(&ret);
                 if (ret) {
-                    printf("ifconfig exited with code %d!\n", ret);
+                    LOG("ERROR: ifconfig exited with non-zero code (%d)!", ret);
                     sleep(9);
                 }
 

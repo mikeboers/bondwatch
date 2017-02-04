@@ -19,6 +19,7 @@
         __tm.tm_year + 1900, __tm.tm_mon + 1, __tm.tm_mday, __tm.tm_hour, __tm.tm_min, __tm.tm_sec, \
         ##__VA_ARGS__ \
     ); \
+    fflush(stdout); \
 };
 
 

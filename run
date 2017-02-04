@@ -1,0 +1,7 @@
+#!/bin/bash
+
+## runit service
+
+# TODO: Use svlogd. Or something.
+exec ./bondwatch > log.txt
+
